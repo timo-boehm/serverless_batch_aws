@@ -1,0 +1,163 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Parameters:
+  SERVICENAME:
+    Description: >-
+      The name of the service stack. Whenever possible, resources are named [SERVICENAME]-resource.
+    Type: String
+  INITCODEBUCKET:
+    Description: >-
+      The name of the bucket where the initial code is.
+    Type: String
+  INITZIPFILE:
+    Description: >-
+      The name of the zip-file with the initial code.
+    Type: String
+
+Resources:
+
+  DataBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${SERVICENAME}-data-bucket"
+
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${SERVICENAME}-artifact-bucket"
+
+  CodeRepo:
+    Type: AWS::CodeCommit::Repository
+    Properties:
+      RepositoryName: !Sub "${SERVICENAME}-repo"
+      RepositoryDescription: >-
+        Repository that holds the business logic and the buildspec for CodeBuild.
+      Code:
+        S3:
+          Bucket: !Sub "${INITCODEBUCKET}"
+          Key: !Sub "${INITZIPFILE}"
+
+  CodeBuild:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Description: >-
+        Uses the buildspec.yml file form the repo to build the docker container and pushes it to the container
+        registry.
+      Name: !Sub "${SERVICENAME}-build-project"
+      Artifacts:
+        Type: NO_ARTIFACTS
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Type: LINUX_CONTAINER
+        Image: aws/codebuild/standard:4.0
+        PrivilegedMode: true
+        EnvironmentVariables:
+          - Name: IMAGE_REPO_NAME
+            Type: PLAINTEXT
+            Value: !Ref ContainerRegistry
+          - Name: IMAGE_TAG
+            Type: PLAINTEXT
+            Value: latest
+          - Name: AWS_ACCOUNT_ID
+            Value: !Sub ${AWS::AccountId}
+            Type: PLAINTEXT
+      ServiceRole: !ImportValue CodeBuildRoleArn
+      Source:
+        Type: CODECOMMIT
+        Location: !GetAtt CodeRepo.CloneUrlHttp
+
+  CodePipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: !Sub "${SERVICENAME}-codepipeline"
+      ArtifactStore:
+        Type: S3
+        Location: !Ref ArtifactBucket
+      RoleArn: !ImportValue CodePipelineRoleArn
+      Stages:
+        - Name: Source
+          Actions:
+            - ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: CodeCommit
+                Version: 1
+              Configuration:
+                RepositoryName: !GetAtt CodeRepo.Name
+                BranchName: master
+                PollForSourceChanges: true
+              Name: SourceCodeRepo
+              OutputArtifacts:
+                - Name: SourceArtifact
+        - Name: Build
+          Actions:
+            - ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: 1
+              Configuration:
+                ProjectName: !Ref CodeBuild
+              Name: BuildAndPushContainerImage
+              InputArtifacts:
+                - Name: SourceArtifact
+              OutputArtifacts:
+                - Name: BuildArtifact
+
+  ContainerRegistry:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub "${SERVICENAME}-registry"
+
+  ServerlessCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub "${SERVICENAME}-fargate-cluster"
+
+  BatchJobDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      # Configuration related to the execution environment
+      Family: !Sub "${SERVICENAME}-task"
+      ExecutionRoleArn: !ImportValue BatchJobExecutionRoleArn
+      Cpu: 256
+      Memory: 512
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      # Configuration related to the specific task
+      TaskRoleArn: !ImportValue BatchJobTaskRoleArn
+      ContainerDefinitions:
+        - Image: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ContainerRegistry}:latest"
+          Name: !Sub "${SERVICENAME}-image"
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-create-group: true
+              awslogs-region: eu-central-1
+              awslogs-group: !Sub "${SERVICENAME}-task-log"
+              awslogs-stream-prefix: ecs
+
+  DailyTrigger:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "${SERVICENAME}-trigger"
+      Description: >-
+        Trigger for Batchjob.
+      ScheduleExpression: rate(1 minute)
+      State: DISABLED
+      Targets:
+        - Arn: !GetAtt ServerlessCluster.Arn
+          Id: ECSTarget
+          EcsParameters:
+            LaunchType: FARGATE
+            NetworkConfiguration:
+              AwsVpcConfiguration:
+                AssignPublicIp: DISABLED
+                SecurityGroups:
+                  - !ImportValue ServiceSecurityGroup
+                Subnets:
+                  - !ImportValue ServiceSubnet
+            TaskCount: 1
+            TaskDefinitionArn: !Ref BatchJobDefinition
+          RoleArn: !ImportValue TriggerRoleArn

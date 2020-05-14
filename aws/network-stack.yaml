@@ -1,0 +1,112 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Resources:
+
+  # ------------------------
+  # Main Building Blocks
+  # ------------------------
+
+  ServiceVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/24
+      EnableDnsHostnames: true # Both necessary for PrivateDns of Endpoints
+      EnableDnsSupport: true
+
+  ServiceSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: 10.0.0.0/24
+      VpcId: !Ref ServiceVPC
+      MapPublicIpOnLaunch: false # Make sure that there is no public IP
+
+  ServiceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: SG for the whole Service.
+      VpcId: !Ref ServiceVPC
+
+  ServiceSecurityGroupIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: Allows HTTPS Traffic within the security group.
+      GroupId: !Ref ServiceSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      SourceSecurityGroupId: !GetAtt ServiceSecurityGroup.GroupId
+
+  # -----------------------------------------------
+  # Interface Endpoints for ECR and CloudWatch Logs
+  # -----------------------------------------------
+
+  EcrDockerEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      PrivateDnsEnabled: true
+      SecurityGroupIds:
+        - !Ref ServiceSecurityGroup
+      ServiceName: com.amazonaws.eu-central-1.ecr.dkr
+      SubnetIds:
+        - !Ref ServiceSubnet
+      VpcEndpointType: Interface
+      VpcId: !Ref ServiceVPC
+
+  EcrApiEndpoint: # For Fargate version 1.4.0
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      PrivateDnsEnabled: true
+      SecurityGroupIds:
+        - !Ref ServiceSecurityGroup
+      ServiceName: com.amazonaws.eu-central-1.ecr.api
+      SubnetIds:
+        - !Ref ServiceSubnet
+      VpcEndpointType: Interface
+      VpcId: !Ref ServiceVPC
+
+  EcsLogsEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      PrivateDnsEnabled: true
+      SecurityGroupIds:
+        - !Ref ServiceSecurityGroup
+      ServiceName: com.amazonaws.eu-central-1.logs
+      SubnetIds:
+        - !Ref ServiceSubnet
+      VpcEndpointType: Interface
+      VpcId: !Ref ServiceVPC
+
+  # -----------------------------------------------
+  # Gateway Endpoint for ECR to S3
+  # -----------------------------------------------
+
+  ServiceRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref ServiceVPC
+
+  ServiceRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref ServiceRouteTable
+      SubnetId: !Ref ServiceSubnet
+
+  EcrS3Endpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      RouteTableIds:
+        - !Ref ServiceRouteTable
+      ServiceName: com.amazonaws.eu-central-1.s3
+      VpcEndpointType: Gateway
+      VpcId: !Ref ServiceVPC
+
+
+Outputs:
+  ServiceSubnet:
+    Value: !Ref ServiceSubnet
+    Export:
+      Name: ServiceSubnet
+  ServiceSecurityGroup:
+    Value: !Ref ServiceSecurityGroup
+    Export:
+      Name: ServiceSecurityGroup

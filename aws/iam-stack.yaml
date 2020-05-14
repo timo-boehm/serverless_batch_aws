@@ -1,0 +1,269 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Parameters:
+  SERVICENAME:
+    Type: String
+
+Resources:
+
+  # -----------------------------------------------
+  # Development Workflow
+  # -----------------------------------------------
+
+  CodeBuildPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: >-
+        Least privilege policy for code build.
+      ManagedPolicyName: !Sub "codebuild-${SERVICENAME}-policy"
+      Path: !Sub "/${SERVICENAME}/"
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - s3:PutObject
+              - s3:GetObject
+            Resource: "*"
+          - Effect: Allow
+            Action:
+              - logs:CreateLogGroup
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+            Resource: "*"
+          - Effect: Allow
+            Action:
+              - codecommit:GitPull
+            Resource: "*"
+          - Effect: Allow
+            Action:
+              - ecr:GetAuthorizationToken
+              - ecr:InitiateLayerUpload
+              - ecr:UploadLayerPart
+              - ecr:CompleteLayerUpload
+              - ecr:PutImage
+              - ecr:BatchCheckLayerAvailability
+            Resource: "*"
+
+  CodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: >-
+        Role assumed by CodeBuild to carry out the build job.
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - codebuild.amazonaws.com
+              Action:
+                - sts:AssumeRole
+      Path: !Sub "/${SERVICENAME}/"
+      RoleName: !Sub "codebuild-${SERVICENAME}-role"
+      ManagedPolicyArns:
+        - !Ref CodeBuildPolicy
+
+  CodePipelinePolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: >-
+        Least privilege policy for code pipeline.
+      ManagedPolicyName: !Sub "codepipeline-${SERVICENAME}-policy"
+      Path: !Sub "/${SERVICENAME}/"
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - codecommit:GetBranch
+              - codecommit:GetCommit
+              - codecommit:UploadArchive
+              - codecommit:GetUploadArchiveStatus
+            Resource: "*"
+          - Effect: Allow
+            Action:
+              - codebuild:StartBuild
+              - codebuild:BatchGetBuilds
+            Resource: "*"
+          - Effect: Allow
+            Action:
+              - s3:PutObject
+              - s3:GetObject
+            Resource: "*"
+
+  CodePipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: >-
+        Role assumed by CodePipeline to carry out the orchestration.
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - codepipeline.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: !Sub "/${SERVICENAME}/"
+      RoleName: !Sub "codepipeline-${SERVICENAME}-role"
+      ManagedPolicyArns:
+        - !Ref CodePipelinePolicy
+
+  # -----------------------------------------------
+  # Batch Job
+  # -----------------------------------------------
+
+  BatchJobExecutionPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: >-
+        Least privilege policy for execution of the batch job.
+      ManagedPolicyName: !Sub "batchjob-execution-${SERVICENAME}-policy"
+      Path: !Sub "/${SERVICENAME}/"
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - logs:CreateLogGroup
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+            Resource: "*"
+          - Effect: Allow
+            Action:
+              - ecr:GetAuthorizationToken
+              - ecr:BatchCheckLayerAvailability
+              - ecr:GetDownloadUrlForLayer
+              - ecr:BatchGetImage
+            Resource: "*"
+
+  BatchJobExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: >-
+        Role assumed by the Task Definition to execute the task.
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ecs-tasks.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: !Sub "/${SERVICENAME}/"
+      RoleName: !Sub "batchjob-execution-${SERVICENAME}-role"
+      ManagedPolicyArns:
+        - !Ref BatchJobExecutionPolicy
+
+  BatchJobTaskPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: >-
+        Least privilege policy for the task of the batch job.
+      ManagedPolicyName: !Sub "batchjob-task-${SERVICENAME}-policy"
+      Path: !Sub "/${SERVICENAME}/"
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - logs:CreateLogGroup
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+            Resource: "*"
+          - Effect: Allow
+            Action:
+              - s3:ListBucket
+              - s3:PutObject
+              - s3:GetObject
+            Resource: "*"
+
+  BatchJobTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: >-
+        Role assumed by the Task Definition to carry out the task itself.
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ecs-tasks.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: !Sub "/${SERVICENAME}/"
+      RoleName: !Sub "batchjob-task-${SERVICENAME}-role"
+      ManagedPolicyArns:
+        - !Ref BatchJobTaskPolicy
+
+  TriggerPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: >-
+        Least privilege policy for the trigger of the run the batch job.
+      ManagedPolicyName: !Sub "trigger-${SERVICENAME}-policy"
+      Path: !Sub "/${SERVICENAME}/"
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - iam:PassRole
+            Resource: "*"
+            Condition:
+              StringLike:
+                "iam:PassedToService": ecs-tasks.amazonaws.com
+          - Effect: Allow
+            Action:
+              - ecs:RunTask
+            Resource: "*"
+
+  TriggerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: >-
+        Role assumed by CloudWatch Trigger to run the batch job.
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - events.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: !Sub "/${SERVICENAME}/"
+      RoleName: !Sub "trigger-${SERVICENAME}-role"
+      ManagedPolicyArns:
+        - !Ref TriggerPolicy
+
+Outputs:
+
+  CodeBuildRole:
+    Value: !GetAtt CodeBuildRole.Arn
+    Export:
+      Name: CodeBuildRoleArn
+
+  CodePipelineRole:
+    Value: !GetAtt CodePipelineRole.Arn
+    Export:
+      Name: CodePipelineRoleArn
+
+  BatchJobTaskRole:
+    Value: !GetAtt BatchJobTaskRole.Arn
+    Export:
+      Name: BatchJobTaskRoleArn
+
+  BatchJobExecutionRole:
+    Value: !GetAtt BatchJobExecutionRole.Arn
+    Export:
+      Name: BatchJobExecutionRoleArn
+
+  TriggerRole:
+    Value: !GetAtt TriggerRole.Arn
+    Export:
+      Name: TriggerRoleArn
