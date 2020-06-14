@@ -6,7 +6,7 @@ This code repository is supplemental material for four blog posts in total:
 
 1. A conceptual overview and motivation why to choose a serverless architecture and how it looks like [here](https://blog.codecentric.de/en/2020/06/cost-effective-batch-jobs-on-aws-serverless-infrastructure/).
 2. A technical deep dive on the required network resources and settings [here](https://towardsdatascience.com/network-configurations-for-fargate-tasks-6333314c4001).
-3. A technical deep dive on the required roles and polices here (LINK).
+3. A technical deep dive on the required roles and polices [here](https://towardsdatascience.com/how-to-configure-iam-roles-for-fargate-tasks-on-aws-76ad54f11314).
 4. A technical deep dive on the actual services and their configurations here (LINK).
 
 As you can see, each technical deep dive focuses on one of the CloudFormation scripts in the `aws` folder. In the case
